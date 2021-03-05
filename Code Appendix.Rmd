@@ -1,0 +1,804 @@
+---
+title: "Code Appendix"
+author: "Mahmoud Abu Ghzalah"
+date: "5/15/2020"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Appendix
+
+### Code for Neural Network where the feature 'duration' is omitted
+
+```{r, echo= TRUE,eval = FALSE}
+# Load required packages
+
+library(tidyr)
+library(ISLR)
+library(gbm)
+library(dplyr)
+library(caret)
+library(xgboost)
+library(keras)
+library(tensorflow)
+
+
+install_tensorflow(version = 'gpu')
+
+# Change working directory 
+
+setwd('C:/Users/abugh/Documents/R/Machine Learning Project/BankData')
+
+# Load in data
+
+bankData <-  read.csv('bank-additional-full.csv', sep = ';')
+
+# Code for model where the feature duration is not included
+
+# Filter out rows with missing observations
+
+bankData <- bankData %>% drop_na()
+
+bankData <- bankData %>% select(-c('duration'))
+
+
+
+# Encode categorical variables as n-1 dummy variables
+
+dummy <- dummyVars(" ~ job + marital + education + default + housing + loan + contact + month + poutcome + y + day_of_week ", data = bankData)
+
+dummy_pred = data.frame(predict(dummy, newdata = bankData))
+
+bankData = cbind(bankData %>% select(-c('job', "marital" , "education" , "default" , "housing" , "loan" , "contact" , "month" , "poutcome", 'day_of_week')), dummy_pred)
+
+# Encode our target variable y as a binary variable that takes on a value of 0 when the target is 'no', and 1 when the target is 'yes
+
+bankData$y.yes = (bankData$y.no * -1) + 1
+
+bankData <- bankData %>% select(-c(y, y.no, pdays))
+
+# Set seed for reproducibility
+
+set.seed(1)
+
+# Split the data into test and train sets, with 1/2 of all observations in the training set and half the observations in the test test
+
+train_index <- sample(1:nrow(bankData), nrow(bankData)/2)
+
+train <- bankData[train_index,]
+test <- bankData[-train_index,]
+
+# Generate the train and test labels for the response variable
+
+train_labels = train$y.yes
+test_labels = test$y.yes
+
+# Remove response variable from train and test arrays
+
+train <- train %>% select(-c(y.yes))
+test <- test %>% select(-c(y.yes))
+
+
+# Recast the training and test labels as categorical variables
+
+train_labels <- to_categorical(train_labels)
+test_labels <- to_categorical(test_labels)
+
+# Reshape the training labels so they can be used in the neural network
+
+# train_labels <- keras:: array_reshape(train_labels, c(20594,1))
+# test_labels <- keras:: array_reshape(test_labels, c(20594,1))
+
+
+
+# Rescale data using the mean and standard deviation of the training data
+
+mean <- apply(train, 2, mean)
+std <- apply(train, 2, sd)
+
+train <-  scale(train, center = mean, scale = std)
+test <- scale(test, center = mean, scale = std)
+
+# Reshape the data into the expected tensor shape for the specified network
+
+train <- keras::array_reshape(train, c(20594, 61))
+test <- keras::array_reshape(test, c(20594, 61))
+
+
+# metrics <- network %>% evaluate(test, test_labels)
+
+
+build_model <- function(dropout = 0) {
+  
+  model <- keras::keras_model_sequential()
+  
+  model %>% 
+    layer_dense(units = 100, activation = 'relu', input_shape = ncol(train)) %>% 
+    layer_dropout(dropout) %>% 
+    layer_dense(units = 100, activation = 'relu') %>%
+    layer_dropout(dropout) %>% 
+    layer_dense(units = 2, activation = 'softmax')
+  
+  model %>% compile(
+    optimizer = 'rmsprop', 
+    loss = 'binary_crossentropy', 
+    metrics = c('accuracy')
+  )  
+  model
+}
+
+epochs <-  50
+
+model <- build_model()
+
+# Print a dot for every completed epoch to track progress
+
+print_dot_callback <- callback_lambda(
+  on_epoch_end = function(epoch, logs){
+    if (epoch %% 80 == 0 ) cat("\n")
+    cat(".")
+  }
+)
+
+# Run the model
+
+fitted_model <- model %>% fit(train, train_labels, 
+                              epochs = epochs, 
+                              validation_split = 0.2, 
+                              verbose = 0, 
+                              callbacks = list(print_dot_callback)
+                              
+)
+
+# Visualize the training progress
+
+plot(fitted_model)
+
+# Evaluate the model
+
+model %>% evaluate(test, test_labels, verbose = 0)
+
+
+# Try and use the model with dropout = 0.4
+
+model_dropout <- build_model(0.4)
+
+fitted_model_dropout <- model_dropout %>% fit(train, train_labels, 
+                                      epochs = epochs, 
+                                      validation_split = 0.2, 
+                                      verbose = 0, 
+                                      callbacks = list(print_dot_callback)
+                                      
+)
+
+plot(fitted_model_dropout)  
+
+model_dropout %>% evaluate(test, test_labels, verbose = 0) 
+
+# Run no dropout model with just one epoch
+
+epochs <- 1
+
+
+fitted_model_final <- model %>% fit(train, train_labels, 
+                                                    epochs = epochs, 
+                                                    validation_split = 0.2, 
+                                                    verbose = 0, 
+                                                    callbacks = list(print_dot_callback)
+                                                    
+)
+
+model %>% evaluate(test, test_labels, verbose = 0)
+
+# Run dropout model with one epoch
+
+fitted_model_dropout_final <- model_dropout %>% fit(train, train_labels, 
+                                                    epochs = epochs, 
+                                                    validation_split = 0.2, 
+                                                    verbose = 0, 
+                                                    callbacks = list(print_dot_callback)
+)
+ 
+model_dropout %>% evaluate(test, test_labels, verbose = 0)                                                   
+```
+
+### Code for Neural Network Where the feature 'duration' is included:
+
+```{r, echo=TRUE, eval=FALSE}
+# Load required packages
+
+library(tidyr)
+library(ISLR)
+library(gbm)
+library(dplyr)
+library(caret)
+library(xgboost)
+library(keras)
+library(tensorflow)
+
+
+install_tensorflow(version = 'gpu')
+
+# Change working directory 
+
+setwd('C:/Users/abugh/Documents/R/Machine Learning Project/BankData')
+
+# Load in data
+
+bankData <-  read.csv('bank-additional-full.csv', sep = ';')
+
+
+# Filter out rows with missing observations
+
+bankData <- bankData %>% drop_na()
+
+
+
+# Encode categorical variables as n-1 dummy variables
+
+dummy <- dummyVars(" ~ job + marital + education + default + housing + loan + contact + month + poutcome + y + day_of_week ", data = bankData)
+
+dummy_pred = data.frame(predict(dummy, newdata = bankData))
+
+bankData = cbind(bankData %>% select(-c('job', "marital" , "education" , "default" , "housing" , "loan" , "contact" , "month" , "poutcome", 'day_of_week')), dummy_pred)
+
+# Encode our target variable y as a binary variable that takes on a value of 0 when the target is 'no', and 1 when the target is 'yes
+
+bankData$y.yes = (bankData$y.no * -1) + 1
+
+bankData <- bankData %>% select(-c(y, y.no, pdays))
+
+# Set seed for reproducibility
+
+set.seed(1)
+
+# Split the data into test and train sets, with 1/2 of all observations in the training set and half the observations in the test test
+
+train_index <- sample(1:nrow(bankData), nrow(bankData)/2)
+
+train <- bankData[train_index,]
+test <- bankData[-train_index,]
+
+# Generate the train and test labels for the response variable
+
+train_labels = train$y.yes
+test_labels = test$y.yes
+
+# Remove response variable from train and test arrays
+
+train <- train %>% select(-c(y.yes))
+test <- test %>% select(-c(y.yes))
+
+
+# Recast the training and test labels as categorical variables
+
+train_labels <- to_categorical(train_labels)
+test_labels <- to_categorical(test_labels)
+
+
+
+# Rescale data using the mean and standard deviation of the training data
+
+mean <- apply(train, 2, mean)
+std <- apply(train, 2, sd)
+
+train <-  scale(train, center = mean, scale = std)
+test <- scale(test, center = mean, scale = std)
+
+# Reshape the data into the expected tensor shape for the specified network
+
+train <- keras::array_reshape(train, c(20594, 62))
+test <- keras::array_reshape(test, c(20594, 62))
+
+
+# Specify a model as a function allowing the dropout parameter to be changed more easily
+# Model consists of two hidden layers with potential dropout between each layer, activation functions are ReLU
+# Final layer uses a softmax function to assign a probability 
+
+build_model <- function(dropout = 0) {
+  
+  model <- keras::keras_model_sequential()
+  
+  model %>% 
+    layer_dense(units = 100, activation = 'relu', input_shape = ncol(train)) %>% 
+    layer_dropout(dropout) %>% 
+    layer_dense(units = 100, activation = 'relu') %>%
+    layer_dropout(dropout) %>% 
+    layer_dense(units = 2, activation = 'softmax')
+  
+  model %>% compile(
+    optimizer = 'rmsprop', 
+    loss = 'binary_crossentropy', 
+    metrics = c('accuracy')
+  )  
+  model
+}
+
+epochs <-  50
+
+model <- build_model()
+
+# Print a dot for every completed epoch to track progress
+
+print_dot_callback <- callback_lambda(
+  on_epoch_end = function(epoch, logs){
+    if (epoch %% 80 == 0 ) cat("\n")
+    cat(".")
+  }
+)
+
+# Run the model
+
+fitted_model <- model %>% fit(train, train_labels, 
+                              epochs = epochs, 
+                              validation_split = 0.2, 
+                              verbose = 0, 
+                              callbacks = list(print_dot_callback)
+                              
+)
+
+# Visualize the training progress
+
+plot(fitted_model) + ggtitle('Duration Included and No Dropout')
+
+# Evaluate the model
+
+model %>% evaluate(test, test_labels, verbose = 0)
+
+
+# Try and use the model with dropout = 0.4
+
+model_dropout <- build_model(0.4)
+
+fitted_model_dropout <- model_dropout %>% fit(train, train_labels, 
+                                              epochs = epochs, 
+                                              validation_split = 0.2, 
+                                              verbose = 0, 
+                                              callbacks = list(print_dot_callback)
+                                              
+)
+
+plot(fitted_model_dropout) + ggtitle('Duration Included and Dropout = 0.4')
+
+
+# Run no dropout model with one epoch
+
+epochs <- 1
+
+
+fitted_model_final <- model %>% fit(train, train_labels, 
+                                    epochs = epochs, 
+                                    validation_split = 0.2, 
+                                    verbose = 0, 
+                                    callbacks = list(print_dot_callback)
+                                    
+)
+
+model %>% evaluate(test, test_labels, verbose = 0)
+
+# Run dropout model with one epoch
+
+fitted_model_dropout_final <- model_dropout %>% fit(train, train_labels, 
+                                                    epochs = epochs, 
+                                                    validation_split = 0.2, 
+                                                    verbose = 0, 
+                                                    callbacks = list(print_dot_callback)
+)
+
+model_dropout %>% evaluate(test, test_labels, verbose = 0)  
+
+
+```
+
+### Code for Boosted Tree where 'duration' and macro variables are included
+
+```{r, echo=TRUE, eval=FALSE}
+# Load required packages
+
+library(tidyr)
+library(ISLR)
+library(gbm)
+library(dplyr)
+library(caret)
+library(xgboost)
+
+# Change working directory 
+
+setwd('C:/Users/abugh/Documents/R/Machine Learning Project/BankData')
+
+# Now consider the model where the feature 'duration' is included
+
+bankData <- bankData <-  read.csv('bank-additional-full.csv', sep = ';')
+
+# Encode categorical variables as n-1 dummy variables
+
+dummy <- dummyVars(" ~ job + marital + education + default + housing + loan + contact + month + poutcome + y + day_of_week ", data = bankData)
+
+dummy_pred = data.frame(predict(dummy, newdata = bankData))
+
+bankData = cbind(bankData %>% select(-c('job', "marital" , "education" , "default" , "housing" , "loan" , "contact" , "month" , "poutcome", 'day_of_week')), dummy_pred)
+
+# Encode our target variable y as a binary variable that takes on a value of 0 when the target is 'no', and 1 when the target is 'yes
+
+bankData$y.yes = (bankData$y.no * -1) + 1
+
+bankData <- bankData %>% select(-c(y, y.no, pdays))
+
+# Set seed for reproducibility
+
+set.seed(1)
+
+# Split the data into test and train sets, with 1/2 of all observations in the training set and half the observations in the test test
+
+train_index <- sample(1:nrow(bankData), nrow(bankData)/2)
+
+train_with_dur <- bankData[train_index,]
+test_with_dur <- bankData[-train_index,]
+
+# Generate the train and test labels for the response variable
+
+train_labels = train_with_dur$y.yes
+test_labels = test_with_dur$y.yes
+
+# Convert matrix into a sparse matrix that can be used with xgboost
+
+train_dur_final <- Matrix:: sparse.model.matrix(y.yes~.-1,data = train_with_dur)
+test_dur_final <- Matrix:: sparse.model.matrix(y.yes~.-1,data = test_with_dur)
+
+# Use same hyperparameter grid as before
+
+hyperparameter_grid <- expand.grid(
+  eta = c(0.001, 0.01, 0.1,0.2),
+  max_depth = c(1,2,3,4),
+  subsample = c(.65, .8, 1), 
+  optimal_trees = 0,               
+  min_error = 0                    
+)
+
+# Create a for loop to iterate over hyperparameter grid and fit different models, then populate optimal trees and min error columns of 
+# hyperparameter grid. Early stopping is set to 10, which means if there is no improvement to error after 10 iterations the optimization stops
+
+for(i in 1:nrow(hyperparameter_grid)) {
+  
+  # create parameter list
+  params <- list(
+    eta = hyperparameter_grid$eta[i],
+    max_depth = hyperparameter_grid$max_depth[i],
+    subsample = hyperparameter_grid$subsample[i]
+  )
+  
+  set.seed(1)
+  
+  # train model
+  xgb_tune <- xgb.cv(
+    params = params,
+    data = train_dur_final,
+    label = train_labels,
+    nrounds = 5000,
+    nfold = 5,
+    objective = "binary:hinge",  
+    verbose = 0,               
+    early_stopping_rounds = 10 
+  )
+  
+  # add min training error and optimal number of trees to the hyperparameter grid dataframe, test error corresponds to validation error
+  
+  hyperparameter_grid$optimal_trees[i] <- which.min(xgb_tune$evaluation_log$test_error_mean)
+  hyperparameter_grid$min_error[i] <- min(xgb_tune$evaluation_log$test_error_mean)
+}
+
+# Sort hyperparameter grid by validation error to find the optimal selection of hyperparameters
+
+hyperparameter_grid %>% arrange(min_error) 
+
+# Generate params list corresponding to optimal hyperparameters
+
+params <- list(eta = 0.2, max_depth = 4, subsample = 0.65)
+
+# Fit model with optimal parameters
+
+xgb_fit_final_dur <- xgboost(
+  params = params,
+  data = train_dur_final, 
+  label = train_labels, 
+  nrounds = 66, 
+  objective = 'binary:hinge', 
+  verbose = 0)
+
+# Find the test error rate of the chosen model
+
+predictions <- predict(xgb_fit_final_dur, test_dur_final)
+
+test_error <- mean(predictions != test_with_dur$y.yes)
+
+# Plot a graph showing variable importance
+
+importance_matrix <- xgb.importance(model = xgb_fit_final_dur)
+
+xgb.plot.importance(importance_matrix, top_n = 10, measure = "Gain", main = 'Importance Plot with Duration Included', cex.main = 0.5)
+```
+
+### Code for model where 'duration' is excluded
+
+```{r, echo=TRUE, eval=FALSE}
+# Load required packages
+
+library(tidyr)
+library(ISLR)
+library(gbm)
+library(dplyr)
+library(caret)
+library(xgboost)
+
+# Change working directory 
+
+setwd('C:/Users/abugh/Documents/R/Machine Learning Project/BankData')
+
+# Load in data
+
+# For the model without the feature duration
+
+bankData <-  read.csv('bank-additional-full.csv', sep = ';')
+
+
+bankData <- bankData %>% drop_na()
+
+bankData <- bankData %>% select(-c('duration'))
+
+
+
+# Encode categorical variables as n-1 dummy variables
+
+dummy <- dummyVars(" ~ job + marital + education + default + housing + loan + contact + month + poutcome + y + day_of_week ", data = bankData)
+
+dummy_pred = data.frame(predict(dummy, newdata = bankData))
+
+bankData = cbind(bankData %>% select(-c('job', "marital" , "education" , "default" , "housing" , "loan" , "contact" , "month" , "poutcome", 'day_of_week')), dummy_pred)
+
+# Encode our target variable y as a binary variable that takes on a value of 0 when the target is 'no', and 1 when the target is 'yes
+
+bankData$y.yes = (bankData$y.no * -1) + 1
+
+bankData <- bankData %>% select(-c(y, y.no, pdays))
+
+# Set seed for reproducibility
+
+set.seed(1)
+
+# Split the data into test and train sets, with 1/2 of all observations in the training set and half the observations in the test test
+
+train_index <- sample(1:nrow(bankData), nrow(bankData)/2)
+
+train <- bankData[train_index,]
+test <- bankData[-train_index,]
+
+# Generate the train and test labels for the response variable
+
+train_labels = train$y.yes
+test_labels = test$y.yes
+
+
+# Convert matrix into a sparse matrix that can be used with xgboost
+
+train_final <- Matrix:: sparse.model.matrix(y.yes~.-1,data = train)
+test_final <- Matrix:: sparse.model.matrix(y.yes~.-1,data = test)
+
+# Create grid of hyperparameters that need to be tuned
+
+hyperparameter_grid <- expand.grid(
+  eta = c(0.001, 0.01, 0.1,0.2),
+  max_depth = c(1,2,3,4),
+  subsample = c(.65, .8, 1), 
+  optimal_trees = 0,               
+  min_error = 0                    
+)
+
+# Create a for loop to iterate over hyperparameter grid and fit different models, then populate optimal trees and min error columns of 
+# hyperparameter grid. Early stopping is set to 10, which means if there is no improvement to error after 10 iterations the optimization stops
+
+for(i in 1:nrow(hyperparameter_grid)) {
+  
+  # create parameter list
+  params <- list(
+    eta = hyperparameter_grid$eta[i],
+    max_depth = hyperparameter_grid$max_depth[i],
+    subsample = hyperparameter_grid$subsample[i]
+  )
+  
+  set.seed(1)
+  
+  # train model
+  xgb_tune <- xgb.cv(
+    params = params,
+    data = train_final,
+    label = train_labels,
+    nrounds = 5000,
+    nfold = 5,
+    objective = "binary:hinge",  
+    verbose = 0,               
+    early_stopping_rounds = 10 
+  )
+  
+  # add min training error and optimal number of trees to the hyperparameter grid dataframe, test error corresponds to validation error
+  
+  hyperparameter_grid$optimal_trees[i] <- which.min(xgb_tune$evaluation_log$test_error_mean)
+  hyperparameter_grid$min_error[i] <- min(xgb_tune$evaluation_log$test_error_mean)
+}
+
+# Sort hyperparameter grid by test error to find the optimal selection of hyperparameters
+
+hyperparameter_grid %>% arrange(min_error) 
+ 
+# Fit the model corresponding to tuned hyperparameters
+
+# Generate params list corresponding to optimal hyperparameters
+
+params <- list(eta = 0.1, max_depth = 4, subsample = 0.65)
+
+xgb_fit_final <- xgboost(
+                    params = params,
+                    data = train_final, 
+                    label = train_labels, 
+                    nrounds = 67, 
+                    objective = 'binary:hinge', 
+                    verbose = 0)
+
+
+
+# Find the test error rate of the chosen model
+
+predictions <- predict(xgb_fit_final, test_final)
+
+test_error <- mean(predictions != test$y.yes)
+
+# Plot a graph showing variable importance
+
+importance_matrix <- xgb.importance(model = xgb_fit_final)
+
+xgb.plot.importance(importance_matrix, top_n = 10, measure = "Gain", main = 'Importance Plot when Duration is Excluded', cex.main = 0.5)
+
+```
+
+### Code for model where 'duration' and macro variables are excluded
+
+```{r, echo=TRUE, eval=FALSE}
+
+# Load required packages
+
+library(tidyr)
+library(ISLR)
+library(gbm)
+library(dplyr)
+library(caret)
+library(xgboost)
+
+# Change working directory 
+
+setwd('C:/Users/abugh/Documents/R/Machine Learning Project/BankData')
+
+# Repeat but without duration and macro variables
+
+bankData <- bankData <-  read.csv('bank-additional-full.csv', sep = ';')
+
+bankData <- bankData %>% drop_na()
+
+bankData <- bankData %>% select(-c('duration', 'emp.var.rate', 'cons.price.idx', 'cons.conf.idx', 'euribor3m', 'nr.employed'))
+
+# Encode categorical variables as n-1 dummy variables
+
+dummy <- dummyVars(" ~ job + marital + education + default + housing + loan + contact + month + poutcome + y + day_of_week ", data = bankData)
+
+dummy_pred = data.frame(predict(dummy, newdata = bankData))
+
+bankData = cbind(bankData %>% select(-c('job', "marital" , "education" , "default" , "housing" , "loan" , "contact" , "month" , "poutcome", 'day_of_week')), dummy_pred)
+
+# Encode our target variable y as a binary variable that takes on a value of 0 when the target is 'no', and 1 when the target is 'yes
+
+bankData$y.yes = (bankData$y.no * -1) + 1
+
+bankData <- bankData %>% select(-c(y, y.no, pdays))
+
+# Set seed for reproducibility
+
+set.seed(1)
+
+# Split the data into test and train sets, with 1/2 of all observations in the training set and half the observations in the test test
+
+train_index <- sample(1:nrow(bankData), nrow(bankData)/2)
+
+train <- bankData[train_index,]
+test <- bankData[-train_index,]
+
+# Generate the train and test labels for the response variable
+
+train_labels = train$y.yes
+test_labels = test$y.yes
+
+
+# Convert matrix into a sparse matrix that can be used with xgboost
+
+train_final <- Matrix:: sparse.model.matrix(y.yes~.-1,data = train)
+test_final <- Matrix:: sparse.model.matrix(y.yes~.-1,data = test)
+
+# Create grid of hyperparameters that need to be tuned
+
+hyperparameter_grid <- expand.grid(
+  eta = c(0.001, 0.01, 0.1,0.2),
+  max_depth = c(1,2,3,4),
+  subsample = c(.65, .8, 1), 
+  optimal_trees = 0,               
+  min_error = 0                    
+)
+
+# Create a for loop to iterate over hyperparameter grid and fit different models, then populate optimal trees and min error columns of 
+# hyperparameter grid. Early stopping is set to 10, which means if there is no improvement to error after 10 iterations the optimization stops
+
+for(i in 1:nrow(hyperparameter_grid)) {
+  
+  # create parameter list
+  params <- list(
+    eta = hyperparameter_grid$eta[i],
+    max_depth = hyperparameter_grid$max_depth[i],
+    subsample = hyperparameter_grid$subsample[i]
+  )
+  
+  set.seed(1)
+  
+  # train model
+  xgb_tune <- xgb.cv(
+    params = params,
+    data = train_final,
+    label = train_labels,
+    nrounds = 5000,
+    nfold = 5,
+    objective = "binary:hinge",  
+    verbose = 0,               
+    early_stopping_rounds = 10 
+  )
+  
+  # add min training error and optimal number of trees to the hyperparameter grid dataframe, test error corresponds to validation error
+  
+  hyperparameter_grid$optimal_trees[i] <- which.min(xgb_tune$evaluation_log$test_error_mean)
+  hyperparameter_grid$min_error[i] <- min(xgb_tune$evaluation_log$test_error_mean)
+}
+
+# Sort hyperparameter grid by validation error to find the optimal selection of hyperparameters
+
+hyperparameter_grid %>% arrange(min_error) 
+
+# Fit the model corresponding to tuned hyperparameters
+
+# Generate params list corresponding to optimal hyperparameters
+
+params <- list(eta = 0.2, max_depth = 4, subsample = 0.8)
+
+xgb_fit_final <- xgboost(
+  params = params,
+  data = train_final, 
+  label = train_labels, 
+  nrounds = 30, 
+  objective = 'binary:hinge', 
+  verbose = 0)
+
+
+
+# Find the test error rate of the chosen model
+
+predictions <- predict(xgb_fit_final, test_final)
+
+test_error <- mean(predictions != test$y.yes)
+
+# Plot a graph showing variable importance
+
+importance_matrix <- xgb.importance(model = xgb_fit_final)
+
+xgb.plot.importance(importance_matrix, top_n = 10, measure = "Gain", main = 'Importance Plot with no Duration and Macro Vars', cex.main = 0.5)
+```
+
